@@ -1,0 +1,3 @@
+# 全部按文本处理、统一用 LF 存储。工作区里的文件现在就是 LF(Windows 上 git 默认的
+# autocrlf 会在下次检出时把它们改成 CRLF,于是"没改过的文件也显示全文件改动")。
+* text=auto eol=lf

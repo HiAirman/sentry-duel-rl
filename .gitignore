@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+runs/
+*.npz
+*.sdw
+# 导出的权重头(由 export 从检查点重新生成,10MB 不必入库)
+rl_weights*.h
+# 提交用的 .zip 是打包好的权重(每份 4~8MB,与上面的 rl_weights*.h 是同一批数据),
+# 同样不入库;要留档就把 zip 单独放到仓库外。
+*.zip
+# 临时/调试产物:诊断输出、探针日志、pytest 缓存、随手存的检查点
+.probe/
+.probe.log
+.pytest_cache/
+_ckpt/

@@ -1,0 +1,1639 @@
+<title>哨兵大战 GRU 记忆探索</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+SC:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+/* ── 令牌:浅色为基准,深色只改令牌 ───────────────────────────────── */
+:root{
+  --bg:#EDEFF4;         --surface:#FFFFFF;      --surface-2:#F5F7FA;
+  --ink:#141926;        --ink-2:#39435A;        --muted:#6C7789;
+  --rule:#D6DBE5;       --rule-strong:#B4BDCC;
+  --accent:#0E6C76;     --accent-ink:#0A5259;   --accent-soft:#DAEAEC;
+  --ok:#1E6E42;         --ok-soft:#DBEBE1;
+  --bad:#9E3427;        --bad-soft:#F3DEDA;
+  --warn:#77540A;       --warn-soft:#F1E7D0;
+  --code-bg:#F1F3F8;
+
+  --display:"Noto Serif SC",Georgia,"Songti SC",serif;
+  --body:"IBM Plex Sans SC","Noto Sans SC",-apple-system,"Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
+
+  --wrap:1000px;
+  --measure:40em;   /* ≈40 个汉字/行,CJK 的舒适行宽 */
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1219;       --surface:#161B24;      --surface-2:#1B212C;
+    --ink:#E7EBF3;      --ink-2:#C0C8D7;        --muted:#8B96A8;
+    --rule:#28303D;     --rule-strong:#3B4655;
+    --accent:#57C4CA;   --accent-ink:#82D9DE;   --accent-soft:#12313A;
+    --ok:#66C68F;       --ok-soft:#122C1F;
+    --bad:#E58272;      --bad-soft:#2E1A16;
+    --warn:#DDB45C;     --warn-soft:#2A2210;
+    --code-bg:#111620;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1219;         --surface:#161B24;      --surface-2:#1B212C;
+  --ink:#E7EBF3;        --ink-2:#C0C8D7;        --muted:#8B96A8;
+  --rule:#28303D;       --rule-strong:#3B4655;
+  --accent:#57C4CA;     --accent-ink:#82D9DE;   --accent-soft:#12313A;
+  --ok:#66C68F;         --ok-soft:#122C1F;
+  --bad:#E58272;        --bad-soft:#2E1A16;
+  --warn:#DDB45C;       --warn-soft:#2A2210;
+  --code-bg:#111620;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--body);
+  font-size:.95rem;
+  line-height:1.8;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{
+  max-width:var(--wrap);
+  margin:0 auto;
+  padding-block:3rem 5rem;
+  padding-inline:20px;
+  display:flex;
+  flex-direction:column;
+  gap:3.5rem;
+}
+
+/* ── 排印 ────────────────────────────────────────────────────────── */
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.35}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(1.7rem,4.4vw,2.5rem);letter-spacing:-.01em}
+h2{font-family:var(--display);font-weight:700;font-size:1.42rem}
+h3{font-family:var(--body);font-weight:600;font-size:1.02rem}
+p{margin:0}
+strong{font-weight:600;color:var(--ink)}
+a{color:var(--accent-ink);text-decoration-thickness:1px;text-underline-offset:.2em}
+a:hover{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+code{font-family:var(--mono);font-size:.86em}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ── 报头 ────────────────────────────────────────────────────────── */
+.masthead{display:flex;flex-direction:column;gap:1.25rem}
+.kicker{
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);
+}
+.standfirst{font-size:1.03rem;color:var(--ink-2);max-width:62ch}
+.goal{
+  border-inline-start:3px solid var(--rule-strong);
+  padding-inline-start:1rem;
+  color:var(--ink-2);
+  font-size:.9rem;
+  max-width:62ch;
+}
+.goal b{color:var(--ink);font-weight:600}
+
+.status{
+  display:flex;flex-wrap:wrap;gap:.5rem;
+  font-family:var(--mono);font-size:.74rem;
+}
+.status span{
+  display:inline-flex;align-items:baseline;gap:.45em;
+  padding:.4em .7em;border-radius:3px;
+  background:var(--surface);border:1px solid var(--rule);
+  color:var(--ink-2);
+}
+.status b{color:var(--ink);font-weight:600}
+.status .s-ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.status .s-ok b{color:var(--ok)}
+
+/* ── 导航 ────────────────────────────────────────────────────────── */
+.toc{
+  display:flex;flex-wrap:wrap;gap:.4rem .9rem;
+  padding-block:1rem;
+  border-block:1px solid var(--rule);
+  font-family:var(--mono);font-size:.76rem;
+}
+.toc a{color:var(--muted);text-decoration:none;white-space:nowrap}
+.toc a:hover{color:var(--accent)}
+.toc a b{color:var(--ink-2);font-weight:600;margin-inline-end:.4em}
+
+/* ── 章节骨架:左侧 §编号栏 ──────────────────────────────────────── */
+.sec{display:grid;grid-template-columns:64px minmax(0,1fr);gap:0 22px;align-items:start}
+.rail{
+  font-family:var(--mono);font-size:1.02rem;font-weight:500;color:var(--accent);
+  padding-block-start:.28rem;
+}
+.body{display:flex;flex-direction:column;gap:1.15rem;min-width:0}
+/* 正文限宽;表格 / 图 / 代码块不受限,那一层信息密度本来就该更宽 */
+.body p, .body li, .deck{max-width:var(--measure)}
+.body ul, .body ol{margin:0;padding-inline-start:1.15rem;display:flex;flex-direction:column;gap:.4rem;max-width:calc(var(--measure) + 1.15rem)}
+li::marker{color:var(--muted)}
+.deck{color:var(--muted);font-size:.86rem;margin-block-start:-.5rem}
+.sub{display:flex;flex-direction:column;gap:.7rem;margin-block-start:.6rem}
+.sub h3{display:flex;gap:.6em;align-items:baseline}
+.sub h3 .idx{font-family:var(--mono);font-size:.82rem;font-weight:500;color:var(--accent);flex:none}
+@media (max-width:760px){
+  .sec{grid-template-columns:1fr;gap:0}
+  .rail{padding-block-start:0;font-size:.8rem;letter-spacing:.1em;margin-block-end:.35rem}
+}
+
+/* ── 表格 ────────────────────────────────────────────────────────── */
+.scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:4px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.86rem;line-height:1.5}
+th{
+  font-family:var(--mono);font-size:.7rem;font-weight:500;letter-spacing:.05em;
+  color:var(--muted);text-align:start;padding:.6rem .8rem;white-space:nowrap;
+  border-block-end:1px solid var(--rule-strong);background:var(--surface-2);
+}
+td{padding:.6rem .8rem;border-block-end:1px solid var(--rule);vertical-align:baseline}
+tbody tr:last-child td{border-block-end:none}
+td.n,th.n{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:end;white-space:nowrap}
+td.pair{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:end}
+.pair .sep{color:var(--rule-strong);padding-inline:.25em}
+tr.sum td{background:var(--surface-2);font-weight:600}
+tr.mark td{background:var(--accent-soft)}
+.pos{color:var(--ok);font-weight:600}
+.neg{color:var(--bad);font-weight:600}
+.flat{color:var(--muted)}
+.tname{font-family:var(--mono);font-size:.82rem;font-weight:500;white-space:nowrap}
+.chip{
+  display:inline-block;font-family:var(--mono);font-size:.68rem;line-height:1.5;
+  padding:.15em .5em;border-radius:3px;white-space:nowrap;
+}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.no{background:var(--bad-soft);color:var(--bad)}
+.chip.mid{background:var(--warn-soft);color:var(--warn)}
+.chip.neutral{background:var(--surface-2);color:var(--muted)}
+
+/* ── 提示块(无左侧色条) ────────────────────────────────────────── */
+.note{
+  border:1px solid var(--rule);border-radius:4px;background:var(--surface);
+  padding:1rem 1.15rem;display:flex;flex-direction:column;gap:.6rem;
+  max-width:calc(var(--measure) + 2.3rem);
+}
+.note > .lab{
+  font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;color:var(--muted);
+}
+.note.key{background:var(--accent-soft);border-color:transparent}
+.note.key > .lab{color:var(--accent-ink)}
+.note.warn{background:var(--warn-soft);border-color:transparent}
+.note.warn > .lab{color:var(--warn)}
+.note.alert{background:var(--bad-soft);border-color:transparent}
+.note.alert > .lab{color:var(--bad)}
+.note p{font-size:.88rem}
+
+/* ── 代码 ────────────────────────────────────────────────────────── */
+pre{
+  margin:0;background:var(--code-bg);border:1px solid var(--rule);border-radius:4px;
+  padding:.9rem 1rem;overflow-x:auto;font-family:var(--mono);font-size:.78rem;line-height:1.65;
+  color:var(--ink-2);
+}
+pre b{color:var(--ink);font-weight:500}
+pre .c{color:var(--muted)}
+.scroll > pre{border:none;border-radius:0}
+
+/* ── 图 ──────────────────────────────────────────────────────────── */
+figure{margin:0;display:flex;flex-direction:column;gap:.7rem}
+.figscroll{overflow-x:auto;background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:1rem .9rem}
+svg{display:block}
+figcaption{font-size:.78rem;color:var(--muted);max-width:var(--measure);line-height:1.65}
+.legend{
+  display:flex;flex-wrap:wrap;gap:.4rem 1.2rem;
+  font-family:var(--mono);font-size:.72rem;color:var(--muted);
+}
+.legend span{display:inline-flex;align-items:center;gap:.5em}
+.legend i{width:10px;height:10px;border-radius:50%;flex:none;display:inline-block}
+.legend i.base{background:var(--rule-strong)}
+.legend i.cand{background:var(--accent)}
+.legend i.gate{width:2px;height:14px;border-radius:0;background:var(--warn)}
+
+/* SVG 取色一律走令牌,两套主题都成立 */
+.ax{stroke:var(--rule);stroke-width:1}
+.axstrong{stroke:var(--rule-strong);stroke-width:1}
+.gate{stroke:var(--warn);stroke-width:1.5;stroke-dasharray:4 4}
+.dumbbell{stroke:var(--rule-strong);stroke-width:2;stroke-linecap:round}
+/* 图内文字:标识符用等宽,中文由 --body 兜底(等宽字体没有汉字) */
+svg .t{fill:var(--muted);font-family:var(--mono),var(--body);font-size:11px}
+svg .t-ink{fill:var(--ink-2);font-family:var(--mono),var(--body);font-size:11.5px;font-weight:500}
+svg .t-acc{fill:var(--accent-ink);font-family:var(--mono),var(--body);font-size:11px;font-weight:500}
+svg .t-warn{fill:var(--warn);font-family:var(--mono),var(--body);font-size:11px;font-weight:500}
+svg .t-sans{fill:var(--muted);font-family:var(--mono),var(--body);font-size:10px}
+.box{fill:var(--surface-2);stroke:var(--rule-strong);stroke-width:1.25}
+.box-new{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+.flow{stroke:var(--rule-strong);stroke-width:1.25;fill:none}
+.band{fill:var(--warn-soft)}
+.ring{fill:none;stroke:var(--warn);stroke-width:1.25;stroke-dasharray:3 3}
+
+/* ── 页脚 ────────────────────────────────────────────────────────── */
+footer{
+  border-block-start:1px solid var(--rule);padding-block-start:1.5rem;
+  font-size:.8rem;color:var(--muted);display:flex;flex-direction:column;gap:.5rem;max-width:var(--measure);
+}
+footer .mono{font-size:.74rem;color:var(--ink-2)}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="kicker">rl_monet_v1 · 探索报告 · v2 系列</div>
+  <h1>哨兵大战 GRU 记忆探索</h1>
+  <p class="standfirst">
+    给哨兵策略网络加一层循环记忆,让它记住视野外的信息。目标是对阵四个指定对手
+    胜率均 ≥ 0.70 —— <strong>达标了</strong>。但消融实验显示:记忆本身的贡献落在测量噪声里 ——
+    v2.3 上补做的这一次是三次里第一个<strong>符号朝正</strong>的(+0.0250),仍然测不准(§7.4)。
+  </p>
+  <p class="goal">
+    目标(用户原话):增加记忆机制,使用 RNN / Transformer 架构做决策,不断探索和训练,
+    直到对阵 <b>rl_v5</b> / <b>rl_VG_v0.2</b> / <b>rl_best040</b> / <b>rl_VG_v1.0</b>
+    训练胜率<b>均 ≥ 0.70</b>,然后打包。
+  </p>
+  <div class="status">
+    <span class="s-ok"><b>目标已达成</b> 4 / 4 对手过线</span>
+    <span>交付物 <b>rl_VG_v2.3</b></span>
+    <span>验证 <b>2 个独立种子 × 400 局</b></span>
+    <span>最紧一格 <b>rl_v5 = 0.785</b></span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#s1"><b>§1</b>结果</a>
+  <a href="#s2"><b>§2</b>架构与设计</a>
+  <a href="#s3"><b>§3</b>没有 C++ 工具链的验证</a>
+  <a href="#s4"><b>§4</b>遇到的问题</a>
+  <a href="#s5"><b>§5</b>负面发现</a>
+  <a href="#s6"><b>§6</b>v2.1</a>
+  <a href="#s7"><b>§7</b>v2.3</a>
+  <a href="#s8"><b>§8</b>交付物</a>
+</nav>
+
+<!-- ══ §1 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s1">
+  <div class="rail">§1</div>
+  <div class="body">
+    <h2>结果</h2>
+
+    <figure>
+      <div class="figscroll">
+        <svg viewBox="0 0 724 232" style="min-width:700px;width:100%" role="img"
+             aria-label="四个目标对手的胜率哑铃图,两个种子各一幅。起点 rl_VG_v1.0 为灰点,候选 v2.0 为青色点,虚线为 0.70 门槛。">
+          <!-- 面板标题 -->
+          <text class="t" x="224" y="20" text-anchor="middle">seed 90000</text>
+          <text class="t" x="548" y="20" text-anchor="middle">seed 424242</text>
+
+          <!-- 门槛标注 -->
+          <text class="t-warn" x="212" y="36" text-anchor="middle">门槛 0.70</text>
+
+          <!-- 竖向网格线与刻度标签(两幅共用同一把尺) -->
+          <g class="ax">
+            <line x1="119.3" y1="44" x2="119.3" y2="200"/>
+            <line x1="165.8" y1="44" x2="165.8" y2="200"/>
+            <line x1="258.9" y1="44" x2="258.9" y2="200"/>
+            <line x1="305.5" y1="44" x2="305.5" y2="200"/>
+            <line x1="352"   y1="44" x2="352"   y2="200"/>
+            <line x1="443.3" y1="44" x2="443.3" y2="200"/>
+            <line x1="489.8" y1="44" x2="489.8" y2="200"/>
+            <line x1="582.9" y1="44" x2="582.9" y2="200"/>
+            <line x1="629.5" y1="44" x2="629.5" y2="200"/>
+            <line x1="676"   y1="44" x2="676"   y2="200"/>
+          </g>
+          <g class="t" text-anchor="middle">
+            <text x="119.3" y="216">0.5</text>
+            <text x="165.8" y="216">0.6</text>
+            <text x="212.4" y="216">0.7</text>
+            <text x="258.9" y="216">0.8</text>
+            <text x="305.5" y="216">0.9</text>
+            <text x="352"   y="216">1.0</text>
+          </g>
+          <line class="axstrong" x1="96" y1="200" x2="676" y2="200"/>
+
+          <!-- 门槛线 -->
+          <line class="gate" x1="212.4" y1="40" x2="212.4" y2="200"/>
+          <line class="gate" x1="536.4" y1="40" x2="536.4" y2="200"/>
+
+          <!-- 行标签 -->
+          <g class="t-ink" text-anchor="end">
+            <text x="88" y="60">rl_v5</text>
+            <text x="88" y="100">rl_VG_v0.2</text>
+            <text x="88" y="140">rl_best040</text>
+            <text x="88" y="180">rl_VG_v1.0</text>
+          </g>
+
+          <!-- seed 90000 -->
+          <g>
+            <line class="dumbbell" x1="282.2" y1="56" x2="242.6" y2="56"/>
+            <circle cx="282.2" cy="56" r="4" fill="var(--rule-strong)"/>
+            <circle cx="242.6" cy="56" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+            <line class="dumbbell" x1="282.2" y1="96" x2="321.7" y2="96"/>
+            <circle cx="282.2" cy="96" r="4" fill="var(--rule-strong)"/>
+            <circle cx="321.7" cy="96" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+            <line class="dumbbell" x1="335.7" y1="136" x2="307.8" y2="136"/>
+            <circle cx="335.7" cy="136" r="4" fill="var(--rule-strong)"/>
+            <circle cx="307.8" cy="136" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+            <line class="dumbbell" x1="133.2" y1="176" x2="312.4" y2="176"/>
+            <circle cx="133.2" cy="176" r="4" fill="var(--rule-strong)"/>
+            <circle cx="312.4" cy="176" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+          </g>
+
+          <!-- seed 424242 -->
+          <g>
+            <line class="dumbbell" x1="617.8" y1="56" x2="555" y2="56"/>
+            <circle cx="617.8" cy="56" r="4" fill="var(--rule-strong)"/>
+            <circle cx="555" cy="56" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+            <circle class="ring" cx="555" cy="56" r="10"/>
+            <text class="t-warn" x="530" y="60" text-anchor="end">0.740 最紧</text>
+
+            <line class="dumbbell" x1="617.8" y1="96" x2="634.1" y2="96"/>
+            <circle cx="617.8" cy="96" r="4" fill="var(--rule-strong)"/>
+            <circle cx="634.1" cy="96" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+            <line class="dumbbell" x1="643.4" y1="136" x2="634.1" y2="136"/>
+            <circle cx="643.4" cy="136" r="4" fill="var(--rule-strong)"/>
+            <circle cx="634.1" cy="136" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+            <line class="dumbbell" x1="431.6" y1="176" x2="636.4" y2="176"/>
+            <circle cx="431.6" cy="176" r="4" fill="var(--rule-strong)"/>
+            <circle cx="636.4" cy="176" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+          </g>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="base"></i>起点 rl_VG_v1.0</span>
+        <span><i class="cand"></i>候选 v2.0</span>
+        <span><i class="gate"></i>门槛 0.70</span>
+        <span>两幅共用同一把尺</span>
+      </div>
+      <figcaption>
+        每个对手一行,灰点到青点的连线就是这一轮训练把它推了多远。两幅图几乎重合,
+        说明读数不是单种子的运气。唯一向后退的一行是 <code>rl_v5</code> —— 也正是余量最小的一格。
+      </figcaption>
+    </figure>
+
+    <div class="sub">
+      <h3><span class="idx">1.1</span>目标读数(决定性测量)</h3>
+      <p>
+        早停判据自带的那次测量:4 个目标对手、<strong>每个 200 局</strong>、独立种子
+        (<code>cfg.seed + 90000</code>),<code>rules=VGRules()</code>。同一口径下把
+        <code>rl_VG_v1.0</code> 自己(即起点)也量了一遍作为对照。下表是<strong>两个独立种子</strong>
+        各跑一遍的结果(协议完全相同,只是种子不同)。
+      </p>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>对手</th>
+              <th class="n">起点 v1.0</th>
+              <th class="n">v2.0</th>
+              <th class="n">差(seed 90000)</th>
+              <th>门槛 ≥0.70</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="tname">rl_v5</td>
+              <td class="pair">0.850<span class="sep">/</span>0.875</td>
+              <td class="pair"><strong>0.765<span class="sep">/</span>0.740</strong></td>
+              <td class="n neg">−0.085</td>
+              <td><span class="chip mid">余量 0.040</span></td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v0.2</td>
+              <td class="pair">0.850<span class="sep">/</span>0.875</td>
+              <td class="pair"><strong>0.935<span class="sep">/</span>0.910</strong></td>
+              <td class="n pos">+0.085</td>
+              <td><span class="chip ok">✓ 达标</span></td>
+            </tr>
+            <tr>
+              <td class="tname">rl_best040</td>
+              <td class="pair">0.965<span class="sep">/</span>0.930</td>
+              <td class="pair"><strong>0.905<span class="sep">/</span>0.910</strong></td>
+              <td class="n neg">−0.060</td>
+              <td><span class="chip ok">✓ 达标</span></td>
+            </tr>
+            <tr class="mark">
+              <td class="tname">rl_VG_v1.0</td>
+              <td class="pair">0.530<span class="sep">/</span>0.475</td>
+              <td class="pair"><strong>0.915<span class="sep">/</span>0.915</strong></td>
+              <td class="n pos">+0.385</td>
+              <td><span class="chip ok">✓ 达标</span></td>
+            </tr>
+            <tr class="sum">
+              <td>平均</td>
+              <td class="pair">0.7987<span class="sep">/</span>0.7888</td>
+              <td class="pair">0.8800<span class="sep">/</span>0.8688</td>
+              <td class="n pos">+0.0813</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="deck">每格两个数 = seed 90000 / seed 424242,n = 200。单格 ±1SE ≈ 0.035。</p>
+
+      <div class="note key">
+        <span class="lab">这张表是本报告的核心</span>
+        <p>
+          <strong>起点在四个目标里有三个已经达标</strong>(0.850 / 0.850 / 0.965),唯一不达标的是
+          "打赢冻结的自己"(0.530 ≈ 镜像对局的对称值)。所以这个任务真正的形状是:<strong>把
+          vs v1.0 从 0.53 拉到 0.7 以上,同时别把 <code>rl_v5</code> 掉下去</strong> —— 后者只有
+          0.15 的余量,是全表最紧的一条。v2.0 做到了:换来 +0.385,付出 −0.085。
+        </p>
+      </div>
+
+      <p>
+        换种子的意义有两层。一是把"这条读数是不是单种子的运气"排掉 —— 不是,四个目标在两个
+        种子上都过线,最紧的一格是 <code>rl_v5</code> 的 <strong>0.740</strong>(余量 0.040)。
+        二是 <code>rl_VG_v1.0</code> 自己那一列<strong>几乎逐格复现</strong>(0.530/0.475、0.850/0.875、
+        0.965/0.930),而它的读数只取决于权重和协议、与候选无关 —— 一条完全可复现的基线说明
+        这套测量本身的方差是可控的,候选列的那些抖动是真实的策略差异而不是测量噪声。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">1.2</span>十对手全名单评测(训练过程中的读数)</h3>
+      <p>名单顺序即采样流顺序,<code>eval_games=40</code>:</p>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>对手</th><th class="n">update 20</th><th class="n">update 40</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="tname">official_baseline</td><td class="n">0.875</td><td class="n">1.000</td></tr>
+            <tr><td class="tname">official_hunter</td><td class="n">0.575</td><td class="n">0.675</td></tr>
+            <tr><td class="tname">official_stalker</td><td class="n">1.000</td><td class="n">1.000</td></tr>
+            <tr><td class="tname">official_patrol</td><td class="n">1.000</td><td class="n">1.000</td></tr>
+            <tr><td class="tname">rl_v5</td><td class="n">0.675</td><td class="n">0.775</td></tr>
+            <tr><td class="tname">m3_v1</td><td class="n">0.550</td><td class="n">0.675</td></tr>
+            <tr><td class="tname">m3_v2</td><td class="n">0.400</td><td class="n">0.400</td></tr>
+            <tr><td class="tname">rl_VG_v0.2</td><td class="n">0.950</td><td class="n">0.850</td></tr>
+            <tr><td class="tname">rl_best040</td><td class="n">0.950</td><td class="n">0.825</td></tr>
+            <tr><td class="tname">rl_VG_v1.0</td><td class="n">0.875</td><td class="n">0.850</td></tr>
+            <tr class="sum"><td>综合</td><td class="n">0.7850</td><td class="n">0.8050</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        对照(v1.0 自己在同一名单、同一 <code>games/seed</code> 下的镜像读数)是
+        <strong>0.8550</strong>。也就是说 v2.0 在<strong>全名单</strong>上还没回到起点水平
+        (0.8050 vs 0.8550),但在<strong>用户指定的四个对手</strong>上全面过线。这两件事不矛盾:
+        分数是从"对不在联盟里的对手的通用棋力"换来的。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">1.3</span>训练配置与曲线</h3>
+      <div class="scroll">
+<pre>python -m monet.cli train --run-name v2.0 --arch gru --gru-hidden 128 \
+    --seg-len 32 --segs-per-mb 8 --init-pack rl_VG_v1.0 \
+    --steps 400000 --rollout 4096 --eval-every 20 --eval-games 40 --scan-reveal 0 \
+    --league official_baseline,official_hunter,official_stalker,official_patrol,\
+rl_v5,rl_VG_v0.2,rl_best040,rl_VG_v1.0 \
+    --stop-opponents rl_v5,rl_VG_v0.2,rl_best040,rl_VG_v1.0 --stop-winrate 0.7</pre>
+      </div>
+
+      <p>
+        实际在 <strong>update 40 / 163840 步</strong>早停(约 14 分钟,198 步/秒)。训练曲线
+        (逐 update 的 <code>runs/v2.0/train_metrics.csv</code> 与 <code>curves.png</code>):
+      </p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>指标</th><th class="n">update 1</th><th class="n">update 40</th></tr></thead>
+          <tbody>
+            <tr><td class="tname">approx_kl</td><td class="n">0.0497</td><td class="n">0.0287</td></tr>
+            <tr><td class="tname">entropy</td><td class="n">0.342</td><td class="n">0.249</td></tr>
+            <tr><td>forced_frac(规则接管比例)</td><td class="n">10.4%</td><td class="n">11.6%</td></tr>
+            <tr><td>训练局回报</td><td class="n">+10.89</td><td class="n">+12.68</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="lab">早期为什么"更热"</span>
+        <p>
+          <code>approx_kl</code> 与 <code>clip_frac</code> 系统性高于同期 <code>vg10</code>
+          (0.017~0.024 / 0.09):起点 <code>rl_VG_v1.0</code> 的编码器和三个头是继承来的,而 GRU 与
+          <code>P/bP</code> 是全新的,它们一开始就被<strong>同一个 lr</strong> 推着走,所以早期更新比
+          纯粹续训"更热"。这个热度是 update-20 那次全面回撤(<code>rl_v5</code> 0.675、
+          <code>m3_v2</code> 0.400)最可能的解释,而它在 update 40 之前自行恢复了。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ §2 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s2">
+  <div class="rail">§2</div>
+  <div class="body">
+    <h2>架构与设计</h2>
+
+    <div class="sub">
+      <h3><span class="idx">2.1</span>结构:编码器不动,记忆做成零初始化残差</h3>
+
+      <figure>
+        <div class="figscroll">
+          <svg viewBox="0 0 660 190" style="min-width:620px;width:100%;max-width:660px" role="img"
+               aria-label="结构图:观测经编码器得到 a_t;隐状态经 GRU-128 得到 P·h_t+bP;两者相加得到 feat,再分出策略头与价值头。">
+            <!-- obs_t → Encoder -->
+            <text class="t-ink" x="58" y="62" text-anchor="end">obs_t</text>
+            <path class="flow" d="M66 56 H96" marker-end="none"/>
+            <path class="flow" d="M88 52 l8 4 l-8 4" />
+            <rect class="box" x="96" y="32" width="190" height="48" rx="3"/>
+            <text class="t-ink" x="191" y="53" text-anchor="middle">Encoder</text>
+            <text class="t-sans" x="191" y="69" text-anchor="middle">428→512→512→512</text>
+            <path class="flow" d="M286 56 H310"/>
+            <path class="flow" d="M302 52 l8 4 l-8 4"/>
+            <text class="t-acc" x="318" y="62">a_t</text>
+
+            <!-- h_{t-1} → GRU -->
+            <text class="t-ink" x="58" y="154" text-anchor="end">h_t−1</text>
+            <path class="flow" d="M66 148 H96"/>
+            <path class="flow" d="M88 144 l8 4 l-8 4"/>
+            <rect class="box-new" x="96" y="124" width="190" height="48" rx="3"/>
+            <text class="t-acc" x="191" y="145" text-anchor="middle">GRU-128</text>
+            <text class="t-sans" x="191" y="161" text-anchor="middle">h = (1−z)⊙n + z·h_t−1</text>
+            <path class="flow" d="M286 148 H310"/>
+            <path class="flow" d="M302 144 l8 4 l-8 4"/>
+            <text class="t-acc" x="318" y="154">P·h_t + bP</text>
+
+            <!-- 汇流 -->
+            <path class="flow" d="M392 56 V102"/>
+            <path class="flow" d="M392 148 V102"/>
+            <circle cx="420" cy="102" r="10" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+            <text class="t-acc" x="420" y="106" text-anchor="middle">+</text>
+            <path class="flow" d="M430 102 H470"/>
+            <path class="flow" d="M462 98 l8 4 l-8 4"/>
+            <text class="t-ink" x="476" y="106">feat</text>
+            <path class="flow" d="M512 102 H524"/>
+            <path class="flow" d="M524 75 V131"/>
+            <path class="flow" d="M524 75 H540"/>
+            <path class="flow" d="M524 131 H540"/>
+            <rect class="box" x="540" y="56" width="106" height="38" rx="3"/>
+            <text class="t-ink" x="593" y="79" text-anchor="middle">策略头 π</text>
+            <rect class="box" x="540" y="112" width="106" height="38" rx="3"/>
+            <text class="t-ink" x="593" y="135" text-anchor="middle">价值头 V</text>
+          </svg>
+        </div>
+        <div class="legend">
+          <span>青色 = 本轮新增(GRU + P/bP)</span>
+          <span>灰色 = 从 rl_VG_v1.0 逐层继承</span>
+        </div>
+        <figcaption>
+          <code>P</code> 与 <code>bP</code> 零初始化,于是训练第一步的整个前向逐位等于
+          <code>rl_VG_v1.0</code>。这是整个设计里最重要的决定;理由见下。
+        </figcaption>
+      </figure>
+
+      <div class="scroll">
+<pre>a_t  = Encoder(obs_t)            <span class="c"># 与 rl_VG_v1.0 的编码器逐层同构(428→512→512→512)</span>
+h_t  = GRU_128(a_t, h_{t-1})     <span class="c"># 新增</span>
+feat = a_t + P·h_t + bP          <span class="c"># P、bP <b>零初始化</b></span>
+π_t  = W3·feat + b3     V_t = Wv·feat + bv</pre>
+      </div>
+
+      <p>
+        <code>P = bP = 0</code> 让训练第一步的整个前向<strong>逐位等于 <code>rl_VG_v1.0</code></strong>
+        (<code>tests/test_rnn_policy.py</code> 逐位断言)。这一条是整个设计里最重要的决定:
+      </p>
+      <ul>
+        <li>
+          <strong>最差的情况是"记忆层学成不用它"</strong>,而不是"一上来就把一个已经很强的策略弄坏";
+        </li>
+        <li>
+          反过来,如果把 GRU 输出<strong>直接当</strong> <code>feat</code>,三个头面对的是全新输入分布,
+          v1.0 学到的策略头当堂作废 —— 而这一轮的目标恰恰是"打赢 v1.0",从作废的策略起步是最差的开局。
+        </li>
+      </ul>
+      <p>
+        <code>gru_hidden</code> 取 128 而不是 512:GRU 参数是 <code>3*(I·G + G·G)</code> 量级,
+        512 会多出约 6.3MB,而权重头已经 10.3MB(评测服务单文件上限 8MB,靠分片绕开,但总量仍要克制)。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">2.2</span>训练:截断 BPTT(R2D2 stored-state)</h3>
+      <p>
+        循环网络<strong>不能</strong>沿用 <code>ppo.py</code> 的"把单个时间步打乱成 minibatch" ——
+        同一批里混着来自不同时刻、不同局的步,隐状态传不下去,<strong>记忆层永远学不到跨步依赖,
+        而且不报错、不崩,只是"加了 RNN 但没变强"</strong>。<code>monet/models/ppo_seq.py</code> 改成:
+      </p>
+      <ol>
+        <li>
+          按 <code>done</code> 把 rollout 切成<strong>局</strong>;<strong>段绝不允许跨局</strong>
+          (跨局会把上一局末尾的隐状态带进新的一局,而新一局 <code>h</code> 必须归零);
+        </li>
+        <li>每局再切成定长段(<code>seg_len=32</code>;一局约 54 个决策点,所以多数局只被切 2 段);</li>
+        <li>
+          minibatch 由若干<strong>整段</strong>组成;每段的初始隐状态用<strong>采样时存下来的那个</strong>
+          (= 段起点进入时的 <code>h</code>,天然 detached),这就是截断点;
+        </li>
+        <li>
+          段尾不足一整段的用零补齐,<code>valid</code> 掩码把补出来的步从损失里剔除。归一化用
+          <strong>有效步数</strong>而不是补齐后的槽位数,否则补出来的零会把损失和梯度整体缩小,
+          且缩小比例随每批补齐多少而变。
+        </li>
+      </ol>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">2.3</span>部署:C++ 侧只多两件事</h3>
+      <p>
+        <code>rl_VG_v2.0/rl_VG.cpp</code> 与 v1.0 那份的差别只有两处:
+      </p>
+      <ol>
+        <li>
+          <strong>隐状态必须是全局的</strong>(<code>g_h[128]</code>)—— 引擎每个阶段只调一次
+          <code>act()</code>,记忆要跨这些调用活下来才叫记忆;<code>board.turn == 0</code> 时与
+          <code>g_ob</code>/<code>g_rules</code> 一起归零。
+        </li>
+        <li>
+          <strong>sigmoid 必须在 ±60 截断</strong>,与 Python 侧 <code>_SIG_CLIP</code> 一致 ——
+          不截断在 float32 下 <code>exp(-x)</code> 会在 x &lt; −88 溢出成 <code>inf</code>。
+        </li>
+      </ol>
+      <p>
+        头部另加 <code>kRecurrent</code> / <code>kGruHidden</code> 两行<strong>显式</strong>架构标记。
+        不靠"有没有 <code>kGruHidden</code>"去猜是刻意的:隐式约定少写一行就静默退化成纯 MLP,
+        而表现只是"发出去的包比测出来的弱"。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ §3 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s3">
+  <div class="rail">§3</div>
+  <div class="body">
+    <h2>验证:在没有 C++ 工具链的前提下</h2>
+
+    <div class="note alert">
+      <span class="lab">残留风险 · 本次交付最大的一个</span>
+      <p>
+        <strong>本机没有任何 C++ 编译器</strong>(g++ / clang++ / cl / gcc / cc / tcc 全部不存在,
+        msys64 / MinGW / LLVM 路径为空)。所以部署侧代码<strong>一次都没有被编译过</strong>。
+        上线前必须真编译一次 —— 这条建议写在 README §四。
+      </p>
+    </div>
+
+    <p>补偿手段分两层,都在 <code>tests/test_gru_deploy.py</code>:</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>判据</th><th>手段</th><th class="n">实测</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip neutral">A 前向</span></td><td>把 <code>rl_VG.cpp</code> 的 <code>forward</code> 逐行转写成 Python,float64 对拍</td><td class="n">单步 <strong>9.1e−15</strong></td></tr>
+          <tr><td><span class="chip neutral">B 时序</span></td><td>24 步连续传隐状态</td><td class="n"><strong>1.2e−14</strong>,全程一致</td></tr>
+          <tr><td><span class="chip neutral">C 锚定</span></td><td><code>_py_step</code> 与 <code>forward_seq</code> 互相对拍(防"两个错的东西互相印证")</td><td class="n">1.3e−15</td></tr>
+          <tr><td><span class="chip neutral">D 退化</span></td><td><code>P=bP=0</code> 时是否逐位等于纯编码器路径</td><td class="n pos"><strong>0.000e+00</strong></td></tr>
+          <tr><td><span class="chip neutral">E 端到端</span></td><td>用<strong>真实导出包</strong>走 <code>load_pack_net</code> 解析路径</td><td class="n">16 步 <strong>6.2e−15</strong></td></tr>
+          <tr><td><span class="chip neutral">F 符号</span></td><td><code>rl_VG.cpp</code> 引用的每个 <code>kXxx</code> 都能在包里找到声明</td><td class="n">39 引用 / 57 声明,无未知</td></tr>
+          <tr><td><span class="chip mid">G 词法</span></td><td>两条转写结构上表达不了的坑,直接查 C++ 文本</td><td class="n">见下</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>A~F 抓不到的,用 G 补</strong>。变异测试(对 C++ 文本做 5 种结构性改动,逐一确认测试变红)
+      暴露出两处<strong>numpy 转写结构上无法表达</strong>的危险:
+    </p>
+    <ul>
+      <li>
+        <strong><code>h_prev</code> 必须先存再写 <code>h</code>。</strong>反向里 <code>dz = dh*(h_prev - n)</code>
+        与三处 <code>@ h_prev</code> 都要用它。在 numpy 里 <code>h = (1-z)*n + z*h_prev</code> 是
+        <strong>重新绑定一个新数组</strong>,所以那个时刻 <code>h</code> 与 <code>h_prev</code> 的值相同,
+        写错也测不出来;C++ 里 <code>h[i] = ...</code> 是<strong>原地写</strong>,这个坑是真的。
+      </li>
+      <li>
+        <strong>sigmoid 截断。</strong>numpy 下输入到不了 ±60、float64 的 <code>exp</code> 也不会溢出,
+        所以删掉截断测不出来;float32 下它是必须的。
+      </li>
+    </ul>
+    <p>
+      这两条各配一条<strong>词法</strong>测试(<code>test_gru_step_reads_the_old_h_before_writing_the_new_one</code>
+      按索引比较语句位置;<code>test_sigmoid_clip_matches_the_python_one</code> 用正则取数值再比较,
+      不比较格式)。三条 C++ 变异(挪 <code>hprev</code> 拷贝、把 60 改成 88、引用 <code>kGruWHm</code>)
+      现在全部被抓住。
+    </p>
+    <div class="note warn">
+      <span class="lab">仍然抓不到</span>
+      <p>
+        语法错误、类型错误、<code>#include</code> 缺失、模板 / <code>static_assert</code> 问题。
+        <strong>上线前必须真编译一次。</strong>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ §4 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s4">
+  <div class="rail">§4</div>
+  <div class="body">
+    <h2>遇到的问题与解决方案</h2>
+
+    <div class="sub">
+      <h3><span class="idx">4.1</span>只在交付时刻现形的坑(平时被跳过)</h3>
+      <p>
+        这两个都是<strong>测试自己的 bug</strong>,而且都因为"权重头不存在就跳过"而长期潜伏 ——
+        导出完成的那一刻才第一次运行:
+      </p>
+      <ol>
+        <li>
+          <strong><code>forward_seq</code> 返回 <code>(logits, values)</code>,不是隐状态。</strong>
+          我写成 <code>lg_ref, h_py = net.forward_seq(...)</code>,把 <code>values</code> 接进了隐状态槽位,
+          报出"第 0 步隐状态分叉(最大差 1.606e+00)"。修法:加一个 <code>_py_step(net, obs, h)</code>,
+          用公开 API 在 float64 下重写 <code>RNNPolicy.step</code> 的三步,并加一条断言把它锚回
+          <code>forward_seq</code>,防止"两个错的东西互相印证"。
+        </li>
+        <li>
+          <strong>同一个坑在打包后第二次踩。</strong>
+          <code>test_deploy_forward_agrees_with_a_real_pack</code> 里还留着旧写法,导出完成后立刻
+          <code>ValueError: matmul ... size 128 is different from 1</code>。
+          <strong>结论:跳过型测试在它第一次真正运行之前,不能算测试。</strong>
+          后来专门给它加了一句注释说明这个形状是从哪来的。
+        </li>
+      </ol>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">4.2</span>静默变弱:gru → gru 续训会丢掉记忆</h3>
+      <p>
+        <code>load_init_net</code> 原来无条件走 <code>RNNPolicy.from_mlp</code>,而 <code>from_mlp</code>
+        只搬 <code>_INHERITED</code> 那 16 个张量 —— 拿 <code>rl_VG_v2.0</code> 当起点时,它会把
+        <strong>训好的 GRU 与 P/bP 丢掉、重新随机初始化</strong>,而打印出来的话术还是"初始前向逐位等于
+        <code>rl_VG_v2.0</code>"。形状全对、一处不报错,表现只是"续训了但没变强"。
+      </p>
+      <ul>
+        <li>
+          <strong>修法</strong>:检测到起点本身就是循环包时,按张量名整份 <code>load_state_dict</code>
+          (30 个张量),顺带校验 <code>hidden</code> / <code>gru_hidden</code> 是否匹配(不匹配才报错);
+        </li>
+        <li>
+          <strong>绊线</strong>:<code>tests/test_train.py::test_init_pack_gru_to_gru_copies_the_memory_too</code>,
+          断言 <code>|bP|.max() &gt; 0</code> 且 20 步前向与包逐位一致。用真实包跑,所以同时覆盖
+          <code>load_pack_net</code> 解析 GRU 包那一段。
+        </li>
+      </ul>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">4.3</span>包能被读 ≠ 包能被注册</h3>
+      <p>
+        <code>RNNPolicy</code> 没有 <code>logits(obs)</code> 方法(只有 <code>step(obs, h)</code>),
+        于是 <code>LazyPackNet.logits()</code> / <code>test_pack.py</code> 的注册表检查一遇到 GRU 包就
+        <code>AttributeError</code>。<strong>修法</strong>:补一个 <code>logits(obs)</code> =
+        "零隐状态下的单步前向",并在文档里写清它的语义(它是"这一局刚开局、还没有任何历史"时网络
+        会说的话,不是"这个观测单独看"的答案);带记忆的调用方一律该用 <code>step(obs, h)</code>。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">4.4</span>注册一个包要三处齐全</h3>
+      <p>
+        加了 <code>KNOWN_PACKS</code> 却忘了 <code>STATIC_OPPONENTS</code>,训练<strong>在启动时</strong>抛
+        <code>ValueError: 未知对手: rl_VG_v2.0</code>。这是 README §七判据 F 记过的那类事故,
+        <code>test_pack.py</code> 里有专门测试,但那次事故的教训不是"加个测试",而是
+        <strong>"加一个包 = <code>KNOWN_PACKS</code> 一行 + <code>STATIC_OPPONENTS</code> 一条,缺一不可"</strong>。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">4.5</span>读数依赖名单:<code>evaluate()</code> 只有一条采样流</h3>
+      <p>
+        <code>evaluate()</code> 全程共用<strong>一条</strong> <code>NetPolicy</code> RNG 流,
+        按对手在字典里的顺序依次消耗。所以"某个对手的胜率"取决于它前面跑了多少局 ——
+        换名单、换顺序、换局数,读数就不可比。
+      </p>
+      <p>本次实测到的后果很直观:同一个 v2.0 权重对 <code>rl_v5</code> 的读数</p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>口径</th><th class="n">rl_v5</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>10 对手名单、40 局、seed 20</td><td class="n neg">0.650</td><td><span class="chip no">✗ 流位置噪声</span></td></tr>
+            <tr><td>10 对手名单、40 局、训练器种子</td><td class="n">0.775</td><td><span class="chip ok">✓</span></td></tr>
+            <tr><td>4 对手名单、200 局、seed 90000</td><td class="n">0.765</td><td><span class="chip ok">✓</span></td></tr>
+            <tr><td>单对手名单、400 局、seed 20</td><td class="n">0.762</td><td><span class="chip ok">✓</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        三个独立口径都落在 0.76~0.78,只有 seed-20 那条 10 对手流给出 0.650 —— 那是 40 局
+        (±0.079)在特定流位置上的噪声。<strong>纪律:报任何读数必须带名单 + 局数 + 种子。</strong>
+        <code>tests/diag_one_opp.py</code> 就是为此写的:单对手名单下那条流只服务一个人,读数最干净,
+        局数可以放心往上堆。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">4.6</span>评论腐化(定时任务发现的)</h3>
+      <p>本轮审注释发现并修掉了四处<strong>与代码不符</strong>的注释:</p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>位置</th><th>原来的说法</th><th>实际</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="tname">env/rules_vg.py 模块 docstring</td>
+              <td class="neg">"连续失明 <strong>2</strong> 个阶段"</td>
+              <td><code>MISS_THRESHOLD = 4</code></td>
+            </tr>
+            <tr>
+              <td class="tname">training/config.py seg_len</td>
+              <td class="neg">"段长 32 ≈ <strong>半个回合</strong>的决策量"</td>
+              <td>一局约 54 个决策点,32 ≈ 大半局</td>
+            </tr>
+            <tr>
+              <td class="tname">models/gru.py 门序注释</td>
+              <td class="neg">"拼在一个数组里"</td>
+              <td>是 12 个独立命名的张量,没有哪个数组</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v2.0/vg_rules.h 第 1 行</td>
+              <td class="neg">"<code>rl_VG_v1.0</code> 的规则层"</td>
+              <td>本包的规则层(v2 换的是记忆,不是规则)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        这类注释比没有注释更坏:它们给的是<strong>具体而错误的</strong>信息,读者会照着它去理解代码。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">4.7</span>环境</h3>
+      <ul>
+        <li>
+          <strong>Windows GBK</strong>:变异测试的 <code>subprocess.run</code> 抓
+          <code>UnicodeDecodeError: 'gbk' codec can't decode byte 0xb4</code>,
+          加 <code>encoding="utf-8", errors="replace"</code> 解决。
+        </li>
+        <li>
+          <strong>日志缓冲</strong>:训练输出重定向到文件时,评测段落可能攒到下一次 8KB 刷新才出现,
+          "看起来卡住了"不代表卡住。解决办法是盯 <code>metrics.csv</code> / <code>best.npz</code> 的
+          mtime,而不是盯日志 —— 那些是评测一结束就落盘的。
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══ §5 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s5">
+  <div class="rail">§5</div>
+  <div class="body">
+    <h2>负面发现:记忆的贡献落在噪声里</h2>
+
+    <p>
+      把包里 <code>P</code> / <code>bP</code> 强制归零(等价于"有记忆层但不用它",前向逐位退化成纯编码器),
+      在同一口径下重测:
+    </p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>对手</th><th class="n">带记忆</th><th class="n">P=bP=0</th><th class="n">差</th></tr></thead>
+        <tbody>
+          <tr><td class="tname">rl_v5</td><td class="n">0.765</td><td class="n">0.730</td><td class="n pos">+0.035</td></tr>
+          <tr><td class="tname">rl_VG_v0.2</td><td class="n">0.935</td><td class="n">0.910</td><td class="n pos">+0.025</td></tr>
+          <tr><td class="tname">rl_best040</td><td class="n">0.905</td><td class="n">0.915</td><td class="n neg">−0.010</td></tr>
+          <tr><td class="tname">rl_VG_v1.0</td><td class="n">0.915</td><td class="n">0.915</td><td class="n flat">+0.000</td></tr>
+          <tr class="sum"><td>平均</td><td class="n">0.8800</td><td class="n">0.8675</td><td class="n pos">+0.0125</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>记忆</strong>在表示上是实实在在工作着的 —— 实测 <code>|P·h + bP| / |a3|</code> 的平均比值是
+      <strong>0.29</strong>,也就是记忆那一支的尺度是编码器输出的三成,不是可以忽略的零头。但它在
+      <strong>胜率</strong>上的贡献只有 +0.0125 的平均值,4 个对手里 3 个略好、1 个持平,单格 ±1SE 是
+      0.035 —— <strong>全部落在噪声里</strong>。
+    </p>
+
+    <figure>
+      <div class="figscroll">
+        <svg viewBox="0 0 520 118" style="min-width:500px;width:100%;max-width:520px" role="img"
+             aria-label="噪声带图:±1SE 为 0.035 的阴影带,v2.0 的 +0.0125 与 v2.1 的 −0.0138 两个点都落在带内。">
+          <text class="t" x="260" y="24" text-anchor="middle">0</text>
+          <line class="axstrong" x1="260" y1="30" x2="260" y2="90"/>
+          <rect class="band" x="176" y="44" width="168" height="40"/>
+          <line class="ax" x1="20" y1="64" x2="500" y2="64"/>
+
+          <line x1="290" y1="44" x2="290" y2="84" stroke="var(--accent)" stroke-width="1.5"/>
+          <circle cx="290" cy="64" r="5.5" fill="var(--accent)"/>
+          <text class="t-acc" x="300" y="68">v2.0 +0.0125</text>
+
+          <line x1="227" y1="44" x2="227" y2="84" stroke="var(--bad)" stroke-width="1.5"/>
+          <circle cx="227" cy="64" r="5" fill="var(--surface)" stroke="var(--bad)" stroke-width="1.75"/>
+          <text class="t" x="217" y="68" text-anchor="end" style="fill:var(--bad)">v2.1 −0.0138</text>
+
+          <text class="t" x="260" y="106" text-anchor="middle">±1SE = 0.035 噪声带</text>
+        </svg>
+      </div>
+      <figcaption>
+        记忆支对胜率的贡献,横轴跨度 −0.10 ~ +0.10。两个读数符号相反、量级相当,
+        而且<strong>都落在噪声带里面</strong> —— 合起来说明的只有一件事:它对胜率的影响小于测量分辨率。
+      </figcaption>
+    </figure>
+
+    <div class="note alert">
+      <span class="lab">必须诚实地说</span>
+      <p>
+        v2.0 相对 v1.0 的巨大提升(+0.385 vs v1.0)主要来自
+        <strong>"在含 <code>rl_VG_v1.0</code> 的联盟里继续训练"</strong>(联盟里它开局占 27.8% 的采样;
+        <code>league_weight_mode="room"</code> 按"谁还有余量"动态配重,到 update 40 时它是 9.9%,
+        而 <code>official_hunter</code> 拿走了 24.8%),<strong>而不是来自记忆架构本身</strong>。
+      </p>
+    </div>
+
+    <p>
+      为什么记忆没长起来?当时最可疑的解释是<strong>优化压力不够</strong>:<code>P</code> 从零出发,
+      而它前面站着的是一个已经很强的编码器,把 <code>P</code> 推大的边际收益很小;同时 lr(3e-4)是给一个
+      全新网络调的,对"只微调一小块新增参数"这件事偏大 —— 这也解释了早期那次全面回撤。
+    </p>
+    <p>
+      <strong>这个猜测已经被 <code>runs/v2.1</code> 否证</strong> —— 见 §6。结论是:不是"还没训够",
+      而是这个架构 + 这套优化目标下,记忆支就长不到有正贡献的规模。
+    </p>
+    <p>
+      <strong>这条发现不改变交付结论</strong>(目标读数四个全过线,且是两个独立种子各 200 局实测),
+      但它改变了<strong>对成绩的归因</strong>,而这正是探索报告该说清楚的事。
+    </p>
+  </div>
+</section>
+
+<!-- ══ §6 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s6">
+  <div class="rail">§6</div>
+  <div class="body">
+    <h2>v2.1:多训 2.4 倍步数,记忆反而缩了</h2>
+
+    <div class="sub">
+      <h3><span class="idx">6.1</span>这一轮想验证什么</h3>
+      <p>
+        §5 的猜测是"记忆没长起来 = 优化压力不够"。要是这个解释成立,那就该:<strong>让起点更强</strong>
+        (从 v2.0 整份继承,而不是从零开始)、<strong>把学习率降下来</strong>(3e-4 → 1.5e-4,
+        别让新增的小参数被大步长推飞)、<strong>给它更长的生长时间</strong>(400k 步,不早停)。三条一起上。
+      </p>
+      <p>配置(<code>runs/v2.1/final.npz</code> 的 meta 实录):</p>
+      <div class="scroll">
+<pre>--run-name v2.1 --arch gru --gru-hidden 128 \
+--init-pack rl_VG_v2.0 --lr 1.5e-4 --steps 400000     <span class="c"># 不设 --stop-opponents</span>
+联盟(9):official_baseline/hunter/stalker/patrol, rl_v5, rl_VG_v0.2,
+        rl_best040, rl_VG_v1.0, rl_VG_v2.0            <span class="c"># 把 v2.0 本体也放进陪练</span></pre>
+      </div>
+      <p>
+        启动日志确认起点正确:<code>架构 gru:整份继承 30 个张量(编码器 + 三个头 + GRU + P/bP)
+        —— 初始前向逐位等于 rl_VG_v2.0</code>。实际跑了 <strong>98 个 update / 401408 步</strong>
+        (是 v2.0 的 2.45 倍)。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">6.2</span>结果:三条读数全都朝反方向走</h3>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>读数</th><th class="n">v2.0<br>163840 步</th><th class="n">v2.1<br>401408 步</th><th>期望</th><th>实际</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>记忆支尺度 <code>|P·h+bP| / |a3|</code></td>
+              <td class="n">0.2901</td><td class="n">0.2695</td>
+              <td class="flat">变大</td><td><span class="chip no">✗ 变小</span></td>
+            </tr>
+            <tr>
+              <td>消融(<code>P=bP=0</code>)的胜率贡献</td>
+              <td class="n">+0.0125</td><td class="n neg">−0.0138</td>
+              <td class="flat">变大</td><td><span class="chip no">✗ 转负</span></td>
+            </tr>
+            <tr>
+              <td>综合(4 对手 ×200 局 ×seed 90000)</td>
+              <td class="n">0.8800</td><td class="n">0.8600</td>
+              <td class="flat">变大</td><td><span class="chip no">✗ 变低</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        v2.1 在四个目标上仍然全过线(<code>rl_v5</code> 0.770、<code>v0.2</code> 0.890、
+        <code>best040</code> 0.820、<code>v1.0</code> 0.960),所以它<strong>不是一次失败的训练</strong> ——
+        它是"继续训下去并不能让记忆长起来"这个结论的证据。多花 2.4 倍步数,记忆那一支的尺度
+        <strong>没变大反而缩小了</strong>。
+      </p>
+
+      <div class="note">
+        <span class="lab">读数纪律</span>
+        <p>
+          消融的两个数(+0.0125 / −0.0138)单格 ±1SE 都是 0.035,所以诚实的说法是
+          <strong>"记忆支没有正贡献",不是"它有负贡献"</strong>。两个符号相反、量级相当的读数合起来
+          说明的就这一件事:它对胜率的影响小于测量分辨率。
+        </p>
+      </div>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">6.3</span>结论:保留 <code>rl_VG_v2.0</code></h3>
+      <ol>
+        <li>
+          <strong>不打包 v2.1。</strong>命名规则是"一次训练一个小版本",v2.1 这次训练已经跑完、
+          权重留在 <code>runs/v2.1/final.npz</code>,但它的战绩<strong>没有超过</strong> v2.0,
+          再冻结一个包只会让"用哪个"变模糊。
+        </li>
+        <li>
+          <strong>§5 的解释被替换。</strong>不是"训练不够久",而是在"编码器已经很强 + 记忆做成零初始化
+          残差"这个组合下,<code>P</code> 的梯度信号始终不足以把它推到一个对胜率有用的规模。要验证
+          "记忆到底能不能帮上忙",得换一个更能逼出记忆的<strong>任务/对手设置</strong>
+          (例如对手带更强隐式状态、或者把部分观测做得更残缺),而不是继续加步数。
+        </li>
+        <li>
+          <strong><code>rl_VG_v2.0</code> 的交付结论不受影响</strong> ——
+          它是两个独立种子上都四个目标全过线的那一份。
+        </li>
+      </ol>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">6.4</span>一个顺带观察(未深入)</h3>
+      <p>
+        v2.1 在<strong>不在联盟里</strong>的 <code>m3_v1</code> 上从 0.675 掉到 <strong>0.250</strong>
+        (训练器自己的 10 对手评测)。<code>m3_v1</code> / <code>m3_v2</code> 都不在 v2.1 的 9 个陪练里,
+        是纯泛化探针。训得越久、越贴合这个联盟,对联盟外对手的棋力退化越明显 —— 这是联盟训练的普遍现象,
+        与记忆架构无关,记在这里是因为它解释了"为什么综合没涨而单项有涨有跌"。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ══ §7 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s7">
+  <div class="rail">§7</div>
+  <div class="body">
+    <h2>v2.3:关掉早停再训一轮,交付换成了这一份</h2>
+
+    <div class="sub">
+      <h3><span class="idx">7.1</span>与 v2.0 的差别只有三处</h3>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>项</th><th>v2.0</th><th>v2.3</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>起点</td>
+              <td class="tname">--init-pack rl_VG_v1.0</td>
+              <td><strong>同左</strong>(GRU 与 <code>P/bP</code> 都是全新初始化)</td>
+            </tr>
+            <tr>
+              <td>架构 / 超参</td>
+              <td>GRU-128,<code>lr 3e-4</code>,<code>seg_len 32</code>,<code>ent_coef 0.01→0.003</code>,…</td>
+              <td><strong>完全一致</strong></td>
+            </tr>
+            <tr class="mark">
+              <td>早停</td>
+              <td><code>stop_opponents=[4 个目标]</code>,<code>stop_winrate=0.7</code></td>
+              <td><strong><code>[]</code>(摘掉)</strong></td>
+            </tr>
+            <tr>
+              <td>实际步数</td>
+              <td><code>163840</code>(update 40,<strong>被早停拦下</strong>)</td>
+              <td><strong>401408</strong>(update 98,跑满)= <strong>2.45×</strong></td>
+            </tr>
+            <tr>
+              <td>联盟</td>
+              <td>8 个(4 个官方)</td>
+              <td><strong>10 个</strong>(+<code>official_ambusher</code> / <code>official_weaver</code>)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        第三行值得单独说:<strong>v2.0 不是在 400k 处停的</strong>。它的预算是 400k,但第 40 次 update
+        时四个目标已全部越过 0.7,早停判据把它拦下了 —— 也就是说 v2.0 的读数取自"预测预算的 41%"。
+        v2.3 摘掉那条判据,让同一套超参在同一张联盟上把预算跑完。
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">7.2</span>结果:8 格全涨</h3>
+
+      <figure>
+        <div class="figscroll">
+          <svg viewBox="0 0 724 232" style="min-width:700px;width:100%" role="img"
+               aria-label="v2.0 到 v2.3 的胜率哑铃图,四个对手 × 两个种子共八格,每一格都向右移动,无一格持平或倒退;虚线为 0.70 门槛。横轴范围 0.70 到 1.00。">
+            <!-- 面板标题 -->
+            <text class="t" x="228" y="20" text-anchor="middle">seed 90000</text>
+            <text class="t" x="558" y="20" text-anchor="middle">seed 424242</text>
+
+            <!-- 门槛标注 -->
+            <text class="t-warn" x="116" y="36">门槛 0.70</text>
+
+            <!-- 竖向网格线与刻度(两幅共用同一把尺) -->
+            <g class="ax">
+              <line x1="116" y1="44" x2="116" y2="200"/>
+              <line x1="156" y1="44" x2="156" y2="200"/>
+              <line x1="196" y1="44" x2="196" y2="200"/>
+              <line x1="236" y1="44" x2="236" y2="200"/>
+              <line x1="276" y1="44" x2="276" y2="200"/>
+              <line x1="316" y1="44" x2="316" y2="200"/>
+              <line x1="356" y1="44" x2="356" y2="200"/>
+              <line x1="446" y1="44" x2="446" y2="200"/>
+              <line x1="486" y1="44" x2="486" y2="200"/>
+              <line x1="526" y1="44" x2="526" y2="200"/>
+              <line x1="566" y1="44" x2="566" y2="200"/>
+              <line x1="606" y1="44" x2="606" y2="200"/>
+              <line x1="646" y1="44" x2="646" y2="200"/>
+              <line x1="686" y1="44" x2="686" y2="200"/>
+            </g>
+            <g class="t" text-anchor="middle">
+              <text x="116" y="216">0.70</text>
+              <text x="156" y="216">0.75</text>
+              <text x="196" y="216">0.80</text>
+              <text x="236" y="216">0.85</text>
+              <text x="276" y="216">0.90</text>
+              <text x="316" y="216">0.95</text>
+              <text x="356" y="216">1.00</text>
+            </g>
+            <line class="axstrong" x1="100" y1="200" x2="700" y2="200"/>
+
+            <!-- 门槛线 -->
+            <line class="gate" x1="116" y1="40" x2="116" y2="200"/>
+            <line class="gate" x1="446" y1="40" x2="446" y2="200"/>
+
+            <!-- 行标签 -->
+            <g class="t-ink" text-anchor="end">
+              <text x="88" y="60">rl_v5</text>
+              <text x="88" y="100">rl_VG_v0.2</text>
+              <text x="88" y="140">rl_best040</text>
+              <text x="88" y="180">rl_VG_v1.0</text>
+            </g>
+
+            <!-- seed 90000 -->
+            <g>
+              <line class="dumbbell" x1="156" y1="56" x2="184" y2="56"/>
+              <circle cx="156" cy="56" r="4" fill="var(--rule-strong)"/>
+              <circle cx="184" cy="56" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+              <circle class="ring" cx="184" cy="56" r="13"/>
+              <text class="t-warn" x="202" y="61">0.785 全表最紧</text>
+
+              <line class="dumbbell" x1="288" y1="96" x2="324" y2="96"/>
+              <circle cx="288" cy="96" r="4" fill="var(--rule-strong)"/>
+              <circle cx="324" cy="96" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+              <line class="dumbbell" x1="289.6" y1="136" x2="334.4" y2="136"/>
+              <circle cx="289.6" cy="136" r="4" fill="var(--rule-strong)"/>
+              <circle cx="334.4" cy="136" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+              <line class="dumbbell" x1="261.6" y1="176" x2="332" y2="176"/>
+              <circle cx="261.6" cy="176" r="4" fill="var(--rule-strong)"/>
+              <circle cx="332" cy="176" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+            </g>
+
+            <!-- seed 424242 -->
+            <g>
+              <line class="dumbbell" x1="474" y1="56" x2="554" y2="56"/>
+              <circle cx="474" cy="56" r="4" fill="var(--rule-strong)"/>
+              <circle cx="554" cy="56" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+              <line class="dumbbell" x1="610" y1="96" x2="656.4" y2="96"/>
+              <circle cx="610" cy="96" r="4" fill="var(--rule-strong)"/>
+              <circle cx="656.4" cy="96" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+              <line class="dumbbell" x1="598" y1="136" x2="656.4" y2="136"/>
+              <circle cx="598" cy="136" r="4" fill="var(--rule-strong)"/>
+              <circle cx="656.4" cy="136" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+
+              <line class="dumbbell" x1="595.6" y1="176" x2="642" y2="176"/>
+              <circle cx="595.6" cy="176" r="4" fill="var(--rule-strong)"/>
+              <circle cx="642" cy="176" r="5.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2"/>
+            </g>
+          </svg>
+        </div>
+        <div class="legend">
+          <span><i class="base"></i>v2.0</span>
+          <span><i class="cand"></i>v2.3</span>
+          <span><i class="gate"></i>门槛 0.70</span>
+          <span>横轴 0.70–1.00,与 §1 不是同一把尺</span>
+        </div>
+        <figcaption>
+          每一行的灰点是 v2.0、青点是 v2.3 —— <strong>八条连线全部朝右</strong>,没有一格持平或倒退。
+          横轴为了看清这些小步长放大到了 0.70–1.00(§1 那张是 0.5–1.0),所以两图的点位<strong>不可直接比</strong>。
+        </figcaption>
+      </figure>
+
+      <p>
+        4 个目标 ×<strong>400 局</strong> × 两个独立种子,名单
+        <code>['rl_v5','rl_VG_v0.2','rl_best040','rl_VG_v1.0']</code>,对手种子 12345,<code>rules=on</code>
+        (<code>tests/diag_four_targets.py 400 &lt;seed&gt; &lt;ckpt&gt;</code>)。
+      </p>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>对手</th>
+              <th class="n">v2.0<br>@90000 / @424242</th>
+              <th class="n">v2.3<br>@90000 / @424242</th>
+              <th class="n">差</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="mark">
+              <td class="tname">rl_v5</td>
+              <td class="pair">0.750<span class="sep">/</span>0.735</td>
+              <td class="pair"><strong>0.785<span class="sep">/</span>0.835</strong></td>
+              <td class="pair pos">+0.035<span class="sep">/</span>+0.100</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v0.2</td>
+              <td class="pair">0.915<span class="sep">/</span>0.905</td>
+              <td class="pair"><strong>0.960<span class="sep">/</span>0.963</strong></td>
+              <td class="pair pos">+0.045<span class="sep">/</span>+0.058</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_best040</td>
+              <td class="pair">0.917<span class="sep">/</span>0.890</td>
+              <td class="pair"><strong>0.973<span class="sep">/</span>0.963</strong></td>
+              <td class="pair pos">+0.056<span class="sep">/</span>+0.073</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v1.0</td>
+              <td class="pair">0.882<span class="sep">/</span>0.887</td>
+              <td class="pair"><strong>0.970<span class="sep">/</span>0.945</strong></td>
+              <td class="pair pos">+0.088<span class="sep">/</span>+0.058</td>
+            </tr>
+            <tr class="sum">
+              <td>平均</td>
+              <td class="pair">0.866<span class="sep">/</span>0.854</td>
+              <td class="pair">0.922<span class="sep">/</span>0.926</td>
+              <td class="pair pos">+0.056<span class="sep">/</span>+0.072</td>
+            </tr>
+            <tr class="sum">
+              <td>最低</td>
+              <td class="pair">0.750<span class="sep">/</span>0.735</td>
+              <td class="pair">0.785<span class="sep">/</span>0.835</td>
+              <td class="pair pos">+0.035<span class="sep">/</span>+0.100</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="deck">每格两个数 = seed 90000 / seed 424242,n = 400。单格 ±1SE ≈ 0.019。</p>
+
+      <div class="note key">
+        <span class="lab">8 格全部上升</span>
+        <p>
+          没有一格持平或倒退。除 <code>rl_v5</code> 的 seed-90000 那一格(+0.035,约 1.8SE)外,
+          其余七格都<strong>超过 2SE</strong>。最紧的一格从 <code>rl_v5</code> 的 0.750 抬到
+          <strong>0.785</strong>,对 0.70 门槛的余量从 0.050 变成 0.085 —— 而 <code>rl_v5</code>
+          正是全表唯一有余量压力的那一格(§1.1)。
+        </p>
+      </div>
+
+      <div class="note warn">
+        <span class="lab">不要跨表做减法</span>
+        <p>
+          判读按 §1.1 的老规矩:<code>v2.0</code> 与 <code>v2.3</code> 在<strong>同一份名单、同一个种子、
+          同一次 <code>evaluate()</code></strong> 里先后测出(<code>diag_v23.log</code> /
+          <code>diag_v23_seed2.log</code> 里两行同屏),所以<strong>这张表的差可比</strong>。
+          <strong>不要</strong>拿它去和 §1.1 那张 n=200 的表做减法 —— <code>evaluate()</code> 只有一条
+          采样流,局数一变读数就变(§4.5)。
+        </p>
+      </div>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">7.3</span>⚠️ 这<strong>不能</strong>算推翻 §6</h3>
+
+      <p>
+        §6 的结论是"再多训 2.4 倍步数没用",而 v2.3 恰好也训了 2.45 倍并且涨了。看着矛盾,其实不是
+        —— <strong>v2.3 一次改了三件事,什么都没隔离出来</strong>:
+      </p>
+      <ol>
+        <li>
+          <strong>起点谱系不同。</strong>v2.1 是 <code>--init-pack rl_VG_v2.0</code>,继承的是
+          v2.0 的<strong>整份</strong>权重 —— 连已经训过的 GRU 和尺度 0.29 的 <code>P</code> 一起
+          接着练;v2.3 是 <code>--init-pack rl_VG_v1.0</code>,只继承编码器与三个头,
+          GRU 与 <code>P/bP</code> <strong>全部从零开始</strong>。
+
+          <div class="note alert">
+            <span class="lab">更正</span>
+            <p>
+              这条原先写的是"v2.1 踩了 §4.2 那个 gru→gru 静默丢记忆的坑"。<strong>那条是错的。</strong>
+              §6.1 引的启动日志是"整份继承 30 个张量……",而这句话只有<strong>修复后</strong>的
+              gru→gru 分支才会打印(<code>selfplay.py:956</code>;坏路径打的是"已继承编码器与三个头
+              (16 个张量)")。<code>train_v2.1.log</code> 已经不在了,无法再核,但两条陈述不能同时成立
+              —— 以日志文案为准:v2.1 走的是一条<strong>已经修好</strong>的续训路径,它记忆没长起来
+              跟 §4.2 无关。"起点谱系不同"这个混淆项本身照样成立,只是理由要换成上面这句。
+            </p>
+          </div>
+        </li>
+        <li><strong>联盟更宽。</strong>8 → 10 个陪练(多两个官方 AI)。</li>
+        <li><strong>步数更多。</strong>163840 → 401408。</li>
+      </ol>
+
+      <div class="note warn">
+        <span class="lab">所以 v2.3 证明的是什么</span>
+        <p>
+          <strong>"在 v2.0 的配置下把预算跑完能得到更强的策略"</strong>,<strong>不是</strong>
+          "记忆这次长起来了"。§5.1 那个"GRU vs 同步数 MLP"的对照在 v2.3 上<strong>没有重跑</strong>,
+          所以它的结论(同步数下 GRU 0.768 vs MLP 0.700)对 v2.3 仍然只是外推。
+        </p>
+      </div>
+
+      <p>
+        要干净地分开这三件事,得跑同一份 v2.0 起点、同一张窄联盟、<strong>只</strong>把
+        <code>stop_opponents</code> 摘掉。<strong>这一轮没跑。</strong>
+      </p>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">7.4</span>补做:v2.3 的记忆消融</h3>
+
+      <p>
+        §5 与 §6.2 的消融分别在 v2.0 / v2.1 上做过,v2.3 这份是后补的。口径与那两轮
+        <strong>完全一致</strong>(<code>tests/diag_mem_ablation.py 200 90000 &lt;ckpt&gt;</code>:
+        同一份 4 对手名单、200 局、seed 90000、对手种子 102345、<code>rules=on</code>),
+        所以三行数字可以并排看:
+      </p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>对手</th><th>带记忆</th><th><code>P=bP=0</code></th><th>差</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="tname">rl_v5</td>
+              <td>0.805</td><td>0.760</td><td class="pos">+0.045</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v0.2</td>
+              <td>0.980</td><td>0.930</td><td class="pos">+0.050</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_best040</td>
+              <td>0.975</td><td>0.965</td><td class="pos">+0.010</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v1.0</td>
+              <td>0.955</td><td>0.960</td><td class="neg">−0.005</td>
+            </tr>
+            <tr class="sum">
+              <td>平均</td>
+              <td>0.9287</td><td>0.9038</td><td class="pos"><strong>+0.0250</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>权重</th><th><code>|P·h+bP| / |a3|</code></th><th>消融差(平均)</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="tname">runs/v2.0/final.npz @163840</td>
+              <td>0.2901</td><td class="pos">+0.0125</td>
+            </tr>
+            <tr>
+              <td class="tname">runs/v2.1/final.npz @401408</td>
+              <td>0.2695</td><td class="neg">−0.0138</td>
+            </tr>
+            <tr class="sum">
+              <td><strong>runs/v2.3/final.npz @401408</strong></td>
+              <td><strong>0.4730</strong></td><td class="pos"><strong>+0.0250</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note key">
+        <span class="lab">真正变了的是尺度,不是那个差值</span>
+        <p>
+          <code>P</code> 零初始化,v2.0 与 v2.3 都是让它从零长;v2.3 <strong>一轮内部</strong>
+          就看得见单调增长 —— 同一份训练留下的三个检查点:
+        </p>
+        <div class="scroll">
+<pre>runs/v2.3/best.npz  @245760  -> 0.3650
+runs/v2.3/last.npz  @327680  -> 0.4431
+runs/v2.3/final.npz @401408  -> 0.4730</pre>
+        </div>
+        <p>
+          三个点一路上行(首尾<strong>步数乘 1.63、尺度涨 30%</strong>),而且同一次训练、
+          同一张联盟、同一套超参,没有别的变量。v2.1 是三次里<strong>唯一</strong>一次
+          <code>P</code> 不从零出发的(继承 v2.0 的 <code>P</code>),也是唯一一次尺度
+          <strong>缩了</strong>的。
+        </p>
+        <p>
+          这直接收窄了 §6.3 那句"<code>P</code> 的梯度信号始终不足以把它推到一个对胜率有用的
+          规模":它描述的是 <strong>v2.1 那条谱系</strong>(续训一份已训的 <code>P</code>),
+          不是"编码器强 + 零初始化残差"这个配置本身 —— 同一个配置在 v2.3 上把 <code>P</code>
+          推到了 0.47。
+        </p>
+      </div>
+
+      <div class="note warn">
+        <span class="lab">但 +0.0250 还不足以把结论翻过来</span>
+        <p>
+          <strong>分辨率。</strong>n=200 的单格二项 ±1SE 在 p≈0.95 时是 0.015、p≈0.78 时是
+          0.029(§5 / §6.2 引的 0.035 是 p=0.5 的最坏值);4 格平均在 0.01 量级。+0.0250 大致
+          1.5~2.5SE —— 它是三个消融里第一个<strong>符号朝正</strong>的,不是第一个
+          <strong>显著</strong>的。
+        </p>
+        <p>
+          <strong>归零 <code>P</code> 不只是"撤掉信息"。</strong>v2.3 的 <code>P</code> 支尺度
+          是 0.47,归零等于把三个头的输入整体挪了一截。消融组变弱不能全算在"少了记忆"头上 ——
+          这条对 v2.0 / v2.1 同样成立,不是新问题,但它决定了这个差值不能当"记忆的贡献"读。
+        </p>
+        <p>
+          <strong>它不隔离 §7.3 那三件事。</strong>消融回答的是"训好的 v2.3 里那一支有多大用",
+          不回答"多训的 2.45 倍里有多少是记忆带来的" —— 那仍然只有 §5.1 的 MLP 对照能回答,
+          而 v2.3 上<strong>没有重跑</strong>。
+        </p>
+      </div>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">7.5</span>交付:<code>rl_VG_v2.3/</code></h3>
+
+      <div class="scroll">
+<pre>python -m monet.cli export --ckpt runs/v2.3/final.npz --out rl_VG_v2.3/rl_weights.h
+python tests/check_pack_headers.py rl_VG_v2.3</pre>
+      </div>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>文件</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="tname">rl_VG_v2.3/rl_weights.h + part1..3.h</td>
+              <td>30 个张量,最大分片 7.00 MB(上限 8 MB)</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v2.3/rl_VG.cpp</td>
+              <td>与 <code>rl_VG_v2.0</code> 的<strong>逐字节相同</strong>(<code>c59646c5e55f0ce7f43d435f4a1647f6</code>)</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v2.3/obs_builder.h</td>
+              <td>与 v1.0 <strong>md5 相同</strong>(<code>bfdbd56c8eaef4aed1644084ac092cf4</code>)</td>
+            </tr>
+            <tr>
+              <td class="tname">rl_VG_v2.3/vg_rules.h</td>
+              <td>与 v1.0 的规则<strong>逐字相同</strong>(只有开头注释不同)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>发出去之前验了三层:</p>
+      <ol>
+        <li>
+          <strong>包 == 被评测的那一份。</strong>30 个张量对 <code>runs/v2.3/final.npz</code>
+          逐位相同,24 步连续前向 logits/value 最大差 <code>0.000e+00</code>。
+        </li>
+        <li>
+          <strong>部署侧翻译本 == Python 前向。</strong><code>tests/test_gru_deploy.py</code>
+          拿<strong>包里真实的权重头</strong>跑 16 步,最大差 <code>6.2e-15</code>。
+        </li>
+        <li>
+          <strong>规则层没漂。</strong><code>tests/test_rules_vg.py</code> 的镜像测试改成
+          <strong>按包发现</strong>后,<code>v1.0</code> / <code>v2.0</code> / <code>v2.3</code>
+          三个包的 <code>vg_rules.h</code> 常量一起对 <code>rules_vg.py</code> 核;另外把三个包的
+          <code>obs_builder.h</code> 钉成与 v1.0 <strong>逐位相同</strong>。改之前这两条只认
+          <code>rl_VG_v1.0</code>,v2.3 的规则常量漂了是<strong>不会报红</strong>的(实测:把 v2.3 的
+          <code>kMissThreshold</code> 从 4 改成 3,改之前全绿,改之后退出码 1)。
+        </li>
+      </ol>
+
+      <div class="note warn">
+        <span class="lab">仍未验证的</span>
+        <p>
+          部署侧 C++ <strong>没有被编译过</strong>(本机无工具链)。与 §3 同一个限制。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ §8 ══════════════════════════════════════════════════════════ -->
+<section class="sec" id="s8">
+  <div class="rail">§8</div>
+  <div class="body">
+    <h2>交付物清单</h2>
+
+    <div class="note key">
+      <span class="lab">当前交付物是 §7 的 rl_VG_v2.3/</span>
+      <p>
+        下表是<strong>首次达成时</strong>的 <code>rl_VG_v2.0/</code>;两者的 <code>rl_VG.cpp</code>、
+        <code>obs_builder.h</code>、<code>vg_rules.h</code> <strong>逐字节相同</strong>,只有权重头不同。
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>文件</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td class="tname">rl_VG_v2.0/rl_weights.h</td><td>权重头,<strong>纯 include</strong>(30 个张量拆成 3 个分片)</td></tr>
+          <tr><td class="tname">rl_VG_v2.0/rl_weights_part1..3.h</td><td>分片,最大 7.02 MB(上限 8 MB)</td></tr>
+          <tr><td class="tname">rl_VG_v2.0/rl_VG.cpp</td><td>部署壳:<code>forward</code> + <code>gru_step</code> + 全局 <code>g_h</code> + 安全外壳</td></tr>
+          <tr><td class="tname">rl_VG_v2.0/obs_builder.h</td><td>与 v1.0 <strong>md5 相同</strong>(<code>bfdbd56c8eaef4aed1644084ac092cf4</code>)</td></tr>
+          <tr><td class="tname">rl_VG_v2.0/vg_rules.h</td><td>与 v1.0 的规则<strong>逐字相同</strong>(只有第 1 行注释不同)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>自检:</p>
+    <div class="scroll">
+<pre>python tests/check_pack_headers.py rl_VG_v2.3    <span class="c"># 架构 GRU / include 链 / 符号 / 维度自洽</span>
+python -m pytest tests/ -q                      <span class="c"># 197 passed</span></pre>
+    </div>
+
+    <div class="note key">
+      <span class="lab">发出去的那一份 == 被评测的那一份</span>
+      <p>
+        包里的权重与 <code>runs/v2.0/final.npz</code> 逐位相同(40 步连续前向,最大差
+        <code>0.000e+00</code>)。<code>rl_VG_v2.3</code> 同样验过,<strong>见 §7.5</strong>。
+      </p>
+    </div>
+
+    <p><strong>未打包但保留的</strong>:</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>文件</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="tname">runs/v2.1/final.npz</td>
+            <td>§6 那一轮的权重(401408 步)。<strong>没有冻结成包</strong> —— 它没有超过 v2.0</td>
+          </tr>
+          <tr><td class="tname">runs/v2.0/metrics.csv / train_metrics.csv</td><td>逐次评测 / 逐 update 的训练记录</td></tr>
+          <tr><td class="tname">runs/v2.1/train_metrics.csv</td><td>同上,98 行</td></tr>
+          <tr>
+            <td class="tname">runs/v2.3/best.npz</td>
+            <td>
+              §7 那一轮的<strong>中途最好</strong>权重(step 245760)。<strong>没有打包</strong> ——
+              逐种子比:它 @90000 最低格 0.833 胜过 <code>final</code> 的 0.785,但 @424242 反过来
+              (0.785 vs 0.835);按两个种子平均,它最低格 0.809 与 <code>final</code> 的 0.810 打平,
+              而<strong>均值低 0.031</strong>(0.894 vs 0.924)。最低格是判据,但打平时取均值更高的那份
+            </td>
+          </tr>
+          <tr><td class="tname">runs/v2.3/metrics.csv / train_metrics.csv / curves.png</td><td>逐次评测 / 逐 update / 曲线</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sub">
+      <h3><span class="idx">8.1</span>复现这份报告里的每个数</h3>
+      <div class="scroll">
+<pre><span class="c"># §1.1 的核心读数(两个种子)</span>
+python tests/diag_v2_control.py 200 90000  runs/v2.0/final.npz
+python tests/diag_v2_control.py 200 424242 runs/v2.0/final.npz
+python tests/diag_v2_control.py 200 90000  runs/v2.1/final.npz
+
+<span class="c"># §5 / §6.2 的记忆消融(+ 记忆支尺度)</span>
+python tests/diag_mem_ablation.py 200 90000 runs/v2.0/final.npz
+python tests/diag_mem_ablation.py 200 90000 runs/v2.1/final.npz
+
+<span class="c"># §5.1 的 MLP 对照(1000 局,四个权重一起量,±1SE 一起印)</span>
+python tests/diag_one_opp.py rl_v5 1000 90000 runs/v2.0/final.npz \
+    runs/v2.1/final.npz runs/mlp_ctl/ckpt_u40.npz
+
+<span class="c"># 单个对手的高精度读数(单对手名单,±1SE 会一起印出来)</span>
+python tests/diag_one_opp.py rl_v5 400 20
+
+<span class="c"># §7.2 的 v2.3 读数(v2.0 与 v2.3 同屏,便于直接比)</span>
+python tests/diag_four_targets.py 400 90000  runs/v2.3/final.npz runs/v2.0/final.npz
+python tests/diag_four_targets.py 400 424242 runs/v2.3/final.npz runs/v2.0/final.npz
+python tests/diag_four_targets.py 400 90000  runs/v2.3/best.npz
+python tests/diag_four_targets.py 400 424242 runs/v2.3/best.npz</pre>
+      </div>
+
+      <div class="note warn">
+        <span class="lab">报数纪律</span>
+        <p>
+          <code>evaluate()</code> 在所有对手之间共用<strong>同一条采样流</strong>,所以一个对手的读数
+          会随名单的长度和顺序变(§4.5)。上面每条命令的名单、局数、种子都写死在脚本里 ——
+          引用这些数字时必须连着它们一起引,<strong>不要跨名单做减法</strong>。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>
+    <strong>残留风险</strong>:部署侧 C++ 没有被编译过(本机无工具链)。见 §3。
+  </p>
+  <p class="mono">
+    源文件 EXPLORATION_v2.md 为本报告的权威版本 · rl_monet_v1 · 2026-09-18
+  </p>
+</footer>
+
+</div>

@@ -692,10 +692,16 @@ forbid=zones)` 管走位、`advance_toward(..., avoid_extra=zones)` 把得分区
 | `rl_v5` | `../rl_v5-source/` | MLP | **外部**强 AI,别人训的 | 否 |
 | `m3_v1` | `../m3_v1/` | MLP | 我们自己 `m3` 的导出,**冻结在 step 753664** | 否 |
 | `m3_v2` | `../m3_v2/` | MLP | 同上,**冻结在 step 901120**(更新的那一份) | 否 |
+| `m1_v1` | `m1_v1/` | MLP | 仓库内;`runs/m1/best.npz` 的导出(6.1 万步,**训练度最低**)。**只当起训权重** | 否 |
 | `rl_VG_v0.2` | `rl_VG_v0.2/` | MLP | 仓库内;`rl_VG_v1.0` 的起点兼基线 | 否 |
 | `rl_VG_v1.0` | `rl_VG_v1.0/` | MLP | 仓库内;规则+网络,已交付的冻结包 | 否 |
 | `rl_VG_v2.0` | `rl_VG_v2.0/` | **GRU** | 仓库内;v1.0 的编码器 + 记忆层,已交付的冻结包 | 否 |
 | `rl_VG_v2.3` | `rl_VG_v2.3/` | **GRU** | 仓库内;`v2.0` 续训 400k 步的冻结导出,已交付的冻结包 | 否 |
+
+> `m1_v1` 是这几份里**唯一不是对手**的包:注册进 `KNOWN_PACKS` 只是为了让
+> `--init-pack m1_v1` 能解析到目录,`selfplay.py` 的对手表里**没有**它的条目
+> (加进去会改变联盟配重与评测口径)。目录里只有 `rl_weights.h` 与一份说明,
+> 没有 `obs_builder.h` / `rl_VG.cpp` —— 它从来没提交过,别把它打进 `.so` 交上去。
 
 `rl_VG_v2.0` / `rl_VG_v2.3` 是**循环**包:`rl_weights.h` 里 `kRecurrent = 1`、`kGruHidden = 128`,
 比 MLP 包多 14 个符号(`kGru*` 12 个 + `kMemProj`/`kMemBias`)。解析侧按 `kRecurrent`
